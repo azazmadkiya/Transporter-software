@@ -1,0 +1,51 @@
+name: Create Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release Version (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Build Application
+        run: npm run build
+
+      - name: Create Zip Package
+        run: |
+          cd dist
+          zip -r ../nirmala-transporter-software-build.zip ./*
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Nirmala Transport Software ${{ github.event.inputs.version }}
+          body: |
+            ### Nirmala Transport Software Release ${{ github.event.inputs.version }}
+            - Complete Production Web Assets
+            - Ready for hosting on any static web server / Firebase / Cloudflare Pages / Vercel / Netlify
+          files: |
+            nirmala-transporter-software-build.zip
