@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500">
+  <rect width="800" height="500" fill="#ffffff" />
+  <ellipse cx="400" cy="250" rx="350" ry="180" fill="#283593" />
+  
+  <g fill="#ffffff" transform="translate(60, 190) scale(0.75)">
+    <!-- N -->
+    <path d="M 0,120 L 0,0 L 45,0 L 95,90 L 95,0 L 135,0 L 135,120 L 90,120 L 40,30 L 40,120 Z" />
+    
+    <!-- I -->
+    <path d="M 155,0 L 195,0 L 195,120 L 155,120 Z" />
+    
+    <!-- R -->
+    <path d="M 215,0 L 290,0 C 330,0 340,20 340,45 C 340,70 320,80 295,85 L 340,120 L 290,120 L 255,85 L 255,120 L 215,120 Z M 255,35 L 290,35 C 300,35 300,50 290,50 L 255,50 Z" />
+    
+    <!-- M -->
+    <path d="M 360,120 L 360,0 L 415,0 L 440,75 L 465,0 L 520,0 L 520,120 L 485,120 L 485,50 L 455,120 L 425,120 L 395,50 L 395,120 Z" />
+    
+    <!-- A (Lambda) -->
+    <path d="M 565,0 L 595,0 L 640,120 L 595,120 L 580,70 L 580,70 L 545,120 L 500,120 Z" />
+    
+    <!-- L -->
+    <path d="M 650,0 L 690,0 L 690,90 L 750,90 L 750,120 L 650,120 Z" />
+    
+    <!-- A (Lambda) -->
+    <path d="M 795,0 L 825,0 L 870,120 L 825,120 L 810,70 L 810,70 L 775,120 L 730,120 Z" />
+  </g>
+  
+  <text x="680" y="105" font-family="Arial, sans-serif" font-weight="bold" font-size="20" fill="#333333">TM</text>
+  <circle cx="693" cy="98" r="16" fill="none" stroke="#333333" stroke-width="2" />
+</svg>
