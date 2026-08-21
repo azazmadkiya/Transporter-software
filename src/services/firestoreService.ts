@@ -19,27 +19,62 @@ const STOCK_TX_COL = 'stock_transactions';
 const SETTINGS_DOC = 'settings/company_profile';
 
 /**
- * Recursively removes keys with `undefined` values from objects or arrays
- * so Firestore `setDoc` / `updateDoc` never receives `undefined`.
+ * Recursively removes keys with `undefined` values, NaN/Infinity, functions,
+ * and formats all values safely so Firestore `setDoc` / `updateDoc` never throws errors.
  */
-export function cleanForFirestore<T>(data: T): T {
+export function cleanForFirestore<T>(data: T, seen = new WeakSet()): T {
   if (data === null || data === undefined) {
     return null as unknown as T;
   }
-  if (Array.isArray(data)) {
-    return data.map(item => cleanForFirestore(item)) as unknown as T;
-  }
-  if (typeof data === 'object' && !(data instanceof Date)) {
-    const cleaned: Record<string, any> = {};
-    for (const key of Object.keys(data)) {
-      const val = (data as Record<string, any>)[key];
-      if (val !== undefined) {
-        cleaned[key] = cleanForFirestore(val);
-      }
+  if (typeof data === 'number') {
+    if (isNaN(data) || !isFinite(data)) {
+      return 0 as unknown as T;
     }
-    return cleaned as T;
+    return data;
   }
-  return data;
+  if (typeof data === 'string' || typeof data === 'boolean') {
+    return data;
+  }
+  if (typeof data !== 'object') {
+    return data;
+  }
+  if (data instanceof Date) {
+    return data.toISOString() as unknown as T;
+  }
+  if (seen.has(data as object)) {
+    return null as unknown as T;
+  }
+  seen.add(data as object);
+
+  if (Array.isArray(data)) {
+    return data
+      .map(item => cleanForFirestore(item, seen))
+      .filter(item => item !== undefined) as unknown as T;
+  }
+
+  const cleaned: Record<string, any> = {};
+  for (const key of Object.keys(data as Record<string, any>)) {
+    const val = (data as Record<string, any>)[key];
+    if (val !== undefined && typeof val !== 'function' && typeof val !== 'symbol') {
+      // Firestore fields cannot contain dots '.'
+      const safeKey = key.replace(/\./g, '_');
+      cleaned[safeKey] = cleanForFirestore(val, seen);
+    }
+  }
+  return cleaned as T;
+}
+
+/**
+ * Sanitizes and guarantees a non-empty string ID safe for Firestore document paths.
+ */
+export function sanitizeDocId(rawId: any, fallbackPrefix = 'doc'): string {
+  if (rawId !== null && rawId !== undefined) {
+    const str = String(rawId).trim().replace(/[/]/g, '_');
+    if (str.length > 0) {
+      return str;
+    }
+  }
+  return `${fallbackPrefix}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
 }
 
 // Helper to clear old demo data and initialize clean company settings in Firestore
@@ -502,6 +537,10 @@ export interface TransportBackupData {
   parties: Party[];
   vehicles: Vehicle[];
   expenses: Expense[];
+  products?: ProductItem[];
+  stockTransactions?: StockTransaction[];
+  notesReminders?: NoteReminder[];
+  appUsers?: AppUserAccount[];
   settings?: CompanySettings;
 }
 
@@ -510,58 +549,251 @@ export async function exportFirestoreBackup(fallbackData?: {
   parties?: Party[];
   vehicles?: Vehicle[];
   expenses?: Expense[];
+  products?: ProductItem[];
+  stockTransactions?: StockTransaction[];
+  notesReminders?: NoteReminder[];
+  appUsers?: AppUserAccount[];
   settings?: CompanySettings;
 }): Promise<TransportBackupData> {
-  try {
-    const invSnap = await getDocs(collection(db, INVOICES_COL));
-    const invoices: Invoice[] = [];
-    invSnap.forEach((doc) => invoices.push(doc.data() as Invoice));
-
-    const ptySnap = await getDocs(collection(db, PARTIES_COL));
-    const parties: Party[] = [];
-    ptySnap.forEach((doc) => parties.push(doc.data() as Party));
-
-    const vehSnap = await getDocs(collection(db, VEHICLES_COL));
-    const vehicles: Vehicle[] = [];
-    vehSnap.forEach((doc) => vehicles.push(doc.data() as Vehicle));
-
-    const expSnap = await getDocs(collection(db, EXPENSES_COL));
-    const expenses: Expense[] = [];
-    expSnap.forEach((doc) => expenses.push(doc.data() as Expense));
-
-    let companySettings = fallbackData?.settings || initialCompanySettings;
+  const fetchCol = async <T>(colName: string, fallback?: T[]): Promise<T[]> => {
     try {
-      const settingsSnap = await getDoc(doc(db, 'settings', 'company_profile'));
-      if (settingsSnap.exists()) {
-        companySettings = settingsSnap.data() as CompanySettings;
-      }
-    } catch {
-      // Use fallback
+      const snap = await getDocs(collection(db, colName));
+      const items: T[] = [];
+      snap.forEach(d => items.push(d.data() as T));
+      if (items.length > 0) return items;
+    } catch (err) {
+      console.warn(`Firestore export read note for ${colName}:`, err);
     }
+    return fallback || [];
+  };
 
+  const invoices = await fetchCol<Invoice>(INVOICES_COL, fallbackData?.invoices);
+  const parties = await fetchCol<Party>(PARTIES_COL, fallbackData?.parties);
+  const vehicles = await fetchCol<Vehicle>(VEHICLES_COL, fallbackData?.vehicles);
+  const expenses = await fetchCol<Expense>(EXPENSES_COL, fallbackData?.expenses);
+  const products = await fetchCol<ProductItem>(PRODUCTS_COL, fallbackData?.products);
+  const stockTransactions = await fetchCol<StockTransaction>(STOCK_TX_COL, fallbackData?.stockTransactions);
+  const notesReminders = await fetchCol<NoteReminder>(NOTES_REMINDERS_COL, fallbackData?.notesReminders);
+  const appUsers = await fetchCol<AppUserAccount>(USERS_COL, fallbackData?.appUsers || getLocalUserAccounts());
+
+  let companySettings = fallbackData?.settings || initialCompanySettings;
+  try {
+    const settingsSnap = await getDoc(doc(db, 'settings', 'company_profile'));
+    if (settingsSnap.exists()) {
+      companySettings = settingsSnap.data() as CompanySettings;
+    }
+  } catch {
+    // Use fallback
+  }
+
+  return {
+    version: '2.0',
+    exportedAt: new Date().toISOString(),
+    companyName: companySettings.companyName || 'Nirmala Transport',
+    invoices,
+    parties,
+    vehicles,
+    expenses,
+    products,
+    stockTransactions,
+    notesReminders,
+    appUsers,
+    settings: companySettings,
+  };
+}
+
+/**
+ * Intelligent JSON normalizer for backups:
+ * Parses standard backups, raw item arrays, legacy keys, or wrapped formats.
+ */
+export function normalizeBackupJson(raw: any): TransportBackupData {
+  if (!raw) {
+    throw new Error('Selected backup file is empty.');
+  }
+
+  // If raw is an array directly
+  if (Array.isArray(raw)) {
+    if (raw.length === 0) {
+      throw new Error('The backup JSON array is empty.');
+    }
+    const first = raw[0] || {};
+    if (first.invoiceNumber || first.salesBillNumber || first.purchaseBillNumber || first.billType || first.netPayable !== undefined || first.items) {
+      return {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        invoices: raw,
+        parties: [],
+        vehicles: [],
+        expenses: [],
+        products: [],
+        stockTransactions: [],
+        notesReminders: [],
+        appUsers: []
+      };
+    } else if (first.partyType || first.openingBalance !== undefined || first.closingBalance !== undefined || first.accountCategory) {
+      return {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        invoices: [],
+        parties: raw,
+        vehicles: [],
+        expenses: [],
+        products: [],
+        stockTransactions: [],
+        notesReminders: [],
+        appUsers: []
+      };
+    } else if (first.vehicleNumber || first.truckNumber || first.rcNumber) {
+      return {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        invoices: [],
+        parties: [],
+        vehicles: raw,
+        expenses: [],
+        products: [],
+        stockTransactions: [],
+        notesReminders: [],
+        appUsers: []
+      };
+    } else if (first.expenseType || first.category || first.fuelLiters || first.fuelRate) {
+      return {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        invoices: [],
+        parties: [],
+        vehicles: [],
+        expenses: raw,
+        products: [],
+        stockTransactions: [],
+        notesReminders: [],
+        appUsers: []
+      };
+    } else if (first.currentStock !== undefined || first.minStockLevel !== undefined || first.unit) {
+      return {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        invoices: [],
+        parties: [],
+        vehicles: [],
+        expenses: [],
+        products: raw,
+        stockTransactions: [],
+        notesReminders: [],
+        appUsers: []
+      };
+    }
     return {
       version: '1.0',
       exportedAt: new Date().toISOString(),
-      companyName: companySettings.companyName || 'Nirmala Transport',
-      invoices: invoices.length > 0 ? invoices : (fallbackData?.invoices || []),
-      parties: parties.length > 0 ? parties : (fallbackData?.parties || []),
-      vehicles: vehicles.length > 0 ? vehicles : (fallbackData?.vehicles || []),
-      expenses: expenses.length > 0 ? expenses : (fallbackData?.expenses || []),
-      settings: companySettings,
-    };
-  } catch (err) {
-    console.warn('Export from Firestore failed, using state fallback:', err);
-    return {
-      version: '1.0',
-      exportedAt: new Date().toISOString(),
-      companyName: fallbackData?.settings?.companyName || 'Nirmala Transport',
-      invoices: fallbackData?.invoices || [],
-      parties: fallbackData?.parties || [],
-      vehicles: fallbackData?.vehicles || [],
-      expenses: fallbackData?.expenses || [],
-      settings: fallbackData?.settings || initialCompanySettings,
+      invoices: raw,
+      parties: [],
+      vehicles: [],
+      expenses: [],
+      products: [],
+      stockTransactions: [],
+      notesReminders: [],
+      appUsers: []
     };
   }
+
+  // Unwrap potential wrapper objects
+  const root = (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) 
+    ? raw.data 
+    : (raw.backup && typeof raw.backup === 'object' && !Array.isArray(raw.backup))
+    ? raw.backup
+    : raw;
+
+  // Extract Invoices / Bills
+  const rawInvoices: any[] = [];
+  if (Array.isArray(root.invoices)) rawInvoices.push(...root.invoices);
+  if (Array.isArray(root.bills)) rawInvoices.push(...root.bills);
+  if (Array.isArray(root.salesBills)) rawInvoices.push(...root.salesBills);
+  if (Array.isArray(root.purchaseBills)) rawInvoices.push(...root.purchaseBills);
+  if (Array.isArray(root.allInvoices)) rawInvoices.push(...root.allInvoices);
+
+  // Extract Parties
+  const rawParties: any[] = [];
+  if (Array.isArray(root.parties)) rawParties.push(...root.parties);
+  if (Array.isArray(root.customers)) rawParties.push(...root.customers);
+  if (Array.isArray(root.vendors)) rawParties.push(...root.vendors);
+  if (Array.isArray(root.consignors)) rawParties.push(...root.consignors);
+  if (Array.isArray(root.allParties)) rawParties.push(...root.allParties);
+
+  // Extract Vehicles
+  const rawVehicles: any[] = [];
+  if (Array.isArray(root.vehicles)) rawVehicles.push(...root.vehicles);
+  if (Array.isArray(root.trucks)) rawVehicles.push(...root.trucks);
+  if (Array.isArray(root.lorries)) rawVehicles.push(...root.lorries);
+  if (Array.isArray(root.allVehicles)) rawVehicles.push(...root.allVehicles);
+
+  // Extract Expenses
+  const rawExpenses: any[] = [];
+  if (Array.isArray(root.expenses)) rawExpenses.push(...root.expenses);
+  if (Array.isArray(root.tripExpenses)) rawExpenses.push(...root.tripExpenses);
+  if (Array.isArray(root.allExpenses)) rawExpenses.push(...root.allExpenses);
+
+  // Extract Products
+  const rawProducts: any[] = [];
+  if (Array.isArray(root.products)) rawProducts.push(...root.products);
+  if (Array.isArray(root.stockItems)) rawProducts.push(...root.stockItems);
+  if (Array.isArray(root.stock)) rawProducts.push(...root.stock);
+
+  // Extract Stock Transactions
+  const rawStockTx: any[] = [];
+  if (Array.isArray(root.stockTransactions)) rawStockTx.push(...root.stockTransactions);
+  if (Array.isArray(root.stock_transactions)) rawStockTx.push(...root.stock_transactions);
+  if (Array.isArray(root.transactions)) rawStockTx.push(...root.transactions);
+
+  // Extract Notes & Reminders
+  const rawNotes: any[] = [];
+  if (Array.isArray(root.notesReminders)) rawNotes.push(...root.notesReminders);
+  if (Array.isArray(root.notes_reminders)) rawNotes.push(...root.notes_reminders);
+  if (Array.isArray(root.notes)) rawNotes.push(...root.notes);
+  if (Array.isArray(root.reminders)) rawNotes.push(...root.reminders);
+
+  // Extract Users
+  const rawUsers: any[] = [];
+  if (Array.isArray(root.appUsers)) rawUsers.push(...root.appUsers);
+  if (Array.isArray(root.app_users)) rawUsers.push(...root.app_users);
+  if (Array.isArray(root.users)) rawUsers.push(...root.users);
+  if (Array.isArray(root.allUsers)) rawUsers.push(...root.allUsers);
+
+  // Extract Settings
+  const settings = root.settings || root.companySettings || root.company_profile || root.companyProfile || undefined;
+
+  const dedupe = (arr: any[]) => {
+    const seen = new Set<string>();
+    return arr.filter(item => {
+      if (!item || typeof item !== 'object') return false;
+      const id = String(item.id || item.invoiceNumber || item.vehicleNumber || item.username || item.name || JSON.stringify(item));
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  };
+
+  const totalCount = rawInvoices.length + rawParties.length + rawVehicles.length + rawExpenses.length + 
+                     rawProducts.length + rawStockTx.length + rawNotes.length + rawUsers.length + (settings ? 1 : 0);
+
+  if (totalCount === 0) {
+    throw new Error('No valid transport data (invoices, parties, vehicles, expenses, products, notes, or settings) was found in the selected JSON file.');
+  }
+
+  return {
+    version: String(root.version || '1.0'),
+    exportedAt: root.exportedAt || new Date().toISOString(),
+    companyName: root.companyName || settings?.companyName || 'Nirmala Transport',
+    invoices: dedupe(rawInvoices),
+    parties: dedupe(rawParties),
+    vehicles: dedupe(rawVehicles),
+    expenses: dedupe(rawExpenses),
+    products: dedupe(rawProducts),
+    stockTransactions: dedupe(rawStockTx),
+    notesReminders: dedupe(rawNotes),
+    appUsers: dedupe(rawUsers),
+    settings,
+  };
 }
 
 export async function restoreFirestoreBackup(data: Partial<TransportBackupData>): Promise<{
@@ -569,53 +801,139 @@ export async function restoreFirestoreBackup(data: Partial<TransportBackupData>)
   partiesCount: number;
   vehiclesCount: number;
   expensesCount: number;
+  productsCount: number;
+  stockTransactionsCount: number;
+  notesRemindersCount: number;
+  usersCount: number;
   settingsUpdated: boolean;
+  errors: string[];
 }> {
   let invoicesCount = 0;
   let partiesCount = 0;
   let vehiclesCount = 0;
   let expensesCount = 0;
+  let productsCount = 0;
+  let stockTransactionsCount = 0;
+  let notesRemindersCount = 0;
+  let usersCount = 0;
   let settingsUpdated = false;
+  const errors: string[] = [];
 
-  if (Array.isArray(data.invoices)) {
-    for (const inv of data.invoices) {
-      if (inv && inv.id) {
-        await setDoc(doc(db, INVOICES_COL, inv.id), cleanForFirestore(inv), { merge: true });
-        invoicesCount++;
+  const batchWriteItems = async <T extends Record<string, any>>(
+    collectionName: string,
+    items: T[] | undefined,
+    idGenerator: (item: T) => string
+  ): Promise<number> => {
+    if (!Array.isArray(items) || items.length === 0) return 0;
+
+    let saved = 0;
+    const CHUNK_SIZE = 25;
+
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+      const chunk = items.slice(i, i + CHUNK_SIZE);
+      const chunkPromises = chunk.map(async (item) => {
+        if (!item || typeof item !== 'object') return;
+        const docId = sanitizeDocId(idGenerator(item), collectionName);
+        const cleaned = cleanForFirestore({
+          ...item,
+          id: docId,
+        });
+
+        try {
+          await setDoc(doc(db, collectionName, docId), cleaned, { merge: true });
+          saved++;
+        } catch (err: any) {
+          console.warn(`Error writing to ${collectionName}/${docId}:`, err);
+          errors.push(`${collectionName}/${docId}: ${err?.message || String(err)}`);
+        }
+      });
+
+      await Promise.allSettled(chunkPromises);
+    }
+    return saved;
+  };
+
+  // 1. Invoices
+  invoicesCount = await batchWriteItems(
+    INVOICES_COL, 
+    data.invoices, 
+    (inv: any) => inv.id || inv.invoiceId || inv.invoiceNumber || inv.salesBillNumber || inv.purchaseBillNumber
+  );
+
+  // 2. Parties
+  partiesCount = await batchWriteItems(
+    PARTIES_COL, 
+    data.parties, 
+    (pty: any) => pty.id || pty.partyId || (pty.name ? `pty-${String(pty.name).toLowerCase().replace(/[^a-z0-9]/g, '-')}` : '')
+  );
+
+  // 3. Vehicles
+  vehiclesCount = await batchWriteItems(
+    VEHICLES_COL, 
+    data.vehicles, 
+    (veh: any) => veh.id || veh.vehicleId || (veh.vehicleNumber ? `veh-${String(veh.vehicleNumber).toLowerCase().replace(/[^a-z0-9]/g, '-')}` : '')
+  );
+
+  // 4. Expenses
+  expensesCount = await batchWriteItems(
+    EXPENSES_COL, 
+    data.expenses, 
+    (exp: any) => exp.id || exp.expenseId
+  );
+
+  // 5. Products
+  productsCount = await batchWriteItems(
+    PRODUCTS_COL, 
+    data.products, 
+    (prod: any) => prod.id || prod.productId || (prod.name ? `prod-${String(prod.name).toLowerCase().replace(/[^a-z0-9]/g, '-')}` : '')
+  );
+
+  // 6. Stock Transactions
+  stockTransactionsCount = await batchWriteItems(
+    STOCK_TX_COL, 
+    data.stockTransactions, 
+    (tx: any) => tx.id || tx.txId
+  );
+
+  // 7. Notes & Reminders
+  notesRemindersCount = await batchWriteItems(
+    NOTES_REMINDERS_COL, 
+    data.notesReminders, 
+    (note: any) => note.id || note.noteId
+  );
+
+  // 8. Users
+  if (Array.isArray(data.appUsers) && data.appUsers.length > 0) {
+    usersCount = await batchWriteItems(
+      USERS_COL, 
+      data.appUsers, 
+      (u: any) => u.id || (u.username ? `user-${String(u.username).toLowerCase().replace(/[^a-z0-9]/g, '')}` : '')
+    );
+    // Sync local user cache
+    const currentCached = getLocalUserAccounts();
+    const mergedUsers = [...currentCached];
+    for (const u of data.appUsers) {
+      if (u && u.username) {
+        const idx = mergedUsers.findIndex(m => m.username.toLowerCase() === u.username.toLowerCase());
+        if (idx >= 0) {
+          mergedUsers[idx] = { ...mergedUsers[idx], ...u };
+        } else {
+          mergedUsers.push(u);
+        }
       }
     }
+    saveLocalUserAccounts(mergedUsers);
   }
 
-  if (Array.isArray(data.parties)) {
-    for (const pty of data.parties) {
-      if (pty && pty.id) {
-        await setDoc(doc(db, PARTIES_COL, pty.id), cleanForFirestore(pty), { merge: true });
-        partiesCount++;
-      }
-    }
-  }
-
-  if (Array.isArray(data.vehicles)) {
-    for (const veh of data.vehicles) {
-      if (veh && veh.id) {
-        await setDoc(doc(db, VEHICLES_COL, veh.id), cleanForFirestore(veh), { merge: true });
-        vehiclesCount++;
-      }
-    }
-  }
-
-  if (Array.isArray(data.expenses)) {
-    for (const exp of data.expenses) {
-      if (exp && exp.id) {
-        await setDoc(doc(db, EXPENSES_COL, exp.id), cleanForFirestore(exp), { merge: true });
-        expensesCount++;
-      }
-    }
-  }
-
+  // 9. Settings
   if (data.settings && typeof data.settings === 'object') {
-    await setDoc(doc(db, 'settings', 'company_profile'), cleanForFirestore(data.settings), { merge: true });
-    settingsUpdated = true;
+    try {
+      await setDoc(doc(db, 'settings', 'company_profile'), cleanForFirestore(data.settings), { merge: true });
+      settingsUpdated = true;
+    } catch (err: any) {
+      console.warn('Error writing settings:', err);
+      errors.push(`settings/company_profile: ${err?.message || String(err)}`);
+    }
   }
 
   return {
@@ -623,7 +941,12 @@ export async function restoreFirestoreBackup(data: Partial<TransportBackupData>)
     partiesCount,
     vehiclesCount,
     expensesCount,
+    productsCount,
+    stockTransactionsCount,
+    notesRemindersCount,
+    usersCount,
     settingsUpdated,
+    errors,
   };
 }
 

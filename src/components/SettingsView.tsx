@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { CompanySettings, Invoice, Party, Vehicle, Expense, UserProfile, AppUserAccount, UserRole } from '../types';
+import { CompanySettings, Invoice, Party, Vehicle, Expense, UserProfile, AppUserAccount, UserRole, ProductItem, StockTransaction, NoteReminder } from '../types';
 import { 
   Settings, Building2, CreditCard, Save, CheckCircle2, 
   Database, Download, Upload, FileJson, AlertCircle, RefreshCw, X, FileCheck,
-  ShieldCheck, KeyRound, User, Lock, Plus, Edit2, Trash2, Users, Truck
+  ShieldCheck, KeyRound, User, Lock, Plus, Edit2, Trash2, Users, Truck, Package, Boxes, Bell
 } from 'lucide-react';
 import { 
-  exportFirestoreBackup, restoreFirestoreBackup, TransportBackupData,
+  exportFirestoreBackup, restoreFirestoreBackup, normalizeBackupJson, TransportBackupData,
   saveUserAccount, deleteUserAccount
 } from '../services/firestoreService';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -20,6 +20,9 @@ interface SettingsViewProps {
   parties?: Party[];
   vehicles?: Vehicle[];
   expenses?: Expense[];
+  products?: ProductItem[];
+  stockTransactions?: StockTransaction[];
+  notesReminders?: NoteReminder[];
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -30,7 +33,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   invoices = [],
   parties = [],
   vehicles = [],
-  expenses = []
+  expenses = [],
+  products = [],
+  stockTransactions = [],
+  notesReminders = []
 }) => {
   const [formData, setFormData] = useState<CompanySettings>(settings);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -155,6 +161,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         parties,
         vehicles,
         expenses,
+        products,
+        stockTransactions,
+        notesReminders,
+        appUsers: allUsers,
         settings: formData
       });
 
@@ -170,8 +180,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
+      const parts: string[] = [];
+      if (backupData.invoices?.length) parts.push(`${backupData.invoices.length} Invoices`);
+      if (backupData.parties?.length) parts.push(`${backupData.parties.length} Parties`);
+      if (backupData.vehicles?.length) parts.push(`${backupData.vehicles.length} Trucks`);
+      if (backupData.expenses?.length) parts.push(`${backupData.expenses.length} Expenses`);
+      if (backupData.products?.length) parts.push(`${backupData.products.length} Products`);
+      if (backupData.stockTransactions?.length) parts.push(`${backupData.stockTransactions.length} Stock Logs`);
+
       setBackupSuccessMessage(
-        `Backup exported successfully! Downloaded ${backupData.invoices?.length || 0} Invoices, ${backupData.parties?.length || 0} Parties, ${backupData.vehicles?.length || 0} Vehicles, ${backupData.expenses?.length || 0} Expenses.`
+        `Backup exported successfully! Downloaded ${parts.join(', ')} & Settings.`
       );
     } catch (err) {
       console.error('Export error:', err);
@@ -191,31 +209,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const parsed = JSON.parse(event.target?.result as string);
-
-        if (!parsed || typeof parsed !== 'object') {
-          throw new Error('Selected file is not a valid JSON object.');
+        const textContent = event.target?.result as string;
+        if (!textContent || !textContent.trim()) {
+          throw new Error('Selected backup file is empty.');
         }
 
-        if (
-          !Array.isArray(parsed.invoices) &&
-          !Array.isArray(parsed.parties) &&
-          !Array.isArray(parsed.vehicles) &&
-          !Array.isArray(parsed.expenses)
-        ) {
-          throw new Error('Invalid transport backup file structure: missing invoices, parties, vehicles, or expenses arrays.');
+        let parsed: any;
+        try {
+          parsed = JSON.parse(textContent);
+        } catch (jsonErr: any) {
+          throw new Error(`Invalid JSON file format: ${jsonErr?.message || 'Could not parse JSON.'}`);
         }
 
-        setPendingImportData(parsed as TransportBackupData);
+        const normalized = normalizeBackupJson(parsed);
+        setPendingImportData(normalized);
         setShowImportConfirm(true);
-      } catch (err) {
-        setImportErrorMessage(err instanceof Error ? err.message : 'Failed to parse JSON backup file.');
+      } catch (err: any) {
+        console.error('Import file parse error:', err);
+        setImportErrorMessage(err?.message || 'Failed to parse JSON backup file.');
         setPendingImportData(null);
       }
     };
 
     reader.onerror = () => {
-      setImportErrorMessage('Error reading selected file.');
+      setImportErrorMessage('Error reading selected file from your device.');
     };
 
     reader.readAsText(file);
@@ -232,14 +249,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       const result = await restoreFirestoreBackup(pendingImportData);
 
-      setBackupSuccessMessage(
-        `Data Restored Successfully! Restored ${result.invoicesCount} Invoices, ${result.partiesCount} Parties, ${result.vehiclesCount} Vehicles, ${result.expensesCount} Expenses to Firestore.`
-      );
-      setShowImportConfirm(false);
-      setPendingImportData(null);
-    } catch (err) {
+      const restoredList: string[] = [];
+      if (result.invoicesCount > 0) restoredList.push(`${result.invoicesCount} Invoices`);
+      if (result.partiesCount > 0) restoredList.push(`${result.partiesCount} Parties`);
+      if (result.vehiclesCount > 0) restoredList.push(`${result.vehiclesCount} Trucks`);
+      if (result.expensesCount > 0) restoredList.push(`${result.expensesCount} Expenses`);
+      if (result.productsCount > 0) restoredList.push(`${result.productsCount} Products`);
+      if (result.stockTransactionsCount > 0) restoredList.push(`${result.stockTransactionsCount} Stock Logs`);
+      if (result.notesRemindersCount > 0) restoredList.push(`${result.notesRemindersCount} Notes`);
+      if (result.usersCount > 0) restoredList.push(`${result.usersCount} Users`);
+      if (result.settingsUpdated) restoredList.push('Company Profile');
+
+      const totalItems = result.invoicesCount + result.partiesCount + result.vehiclesCount + 
+                         result.expensesCount + result.productsCount + result.stockTransactionsCount + 
+                         result.notesRemindersCount + result.usersCount + (result.settingsUpdated ? 1 : 0);
+
+      if (totalItems > 0) {
+        let msg = `Data Restored Successfully! Restored: ${restoredList.join(', ')} directly into Firestore.`;
+        if (result.errors.length > 0) {
+          msg += ` (Note: ${result.errors.length} documents had format notes and were skipped)`;
+        }
+        setBackupSuccessMessage(msg);
+        setShowImportConfirm(false);
+        setPendingImportData(null);
+      } else {
+        if (result.errors.length > 0) {
+          setImportErrorMessage(`Restoration encountered an issue: ${result.errors[0]}`);
+        } else {
+          setImportErrorMessage('No matching records were restored. Please check the backup file structure.');
+        }
+      }
+    } catch (err: any) {
       console.error('Restore error:', err);
-      setImportErrorMessage('Failed to restore data to Firestore. Please check your connection.');
+      setImportErrorMessage(`Restoration notice: ${err?.message || 'Please check your connection and try again.'}`);
     } finally {
       setImporting(false);
     }
@@ -652,7 +694,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <span>Data Management (Firestore Manual Backup & Import)</span>
           </h3>
           <span className="text-[11px] text-slate-500 font-mono">
-            {invoices.length} Invoices | {parties.length} Parties | {vehicles.length} Trucks | {expenses.length} Expenses
+            {invoices.length} Invoices | {parties.length} Parties | {vehicles.length} Trucks | {expenses.length} Expenses | {products.length} Products
           </span>
         </div>
 
@@ -775,28 +817,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             {/* Content summary */}
             <div className="bg-slate-50 border border-slate-200 rounded p-3 space-y-2 text-xs">
-              <div className="font-bold text-slate-800 border-b border-slate-200 pb-1">
-                Backup File Details
+              <div className="font-bold text-slate-800 border-b border-slate-200 pb-1 flex items-center justify-between">
+                <span>Backup Content Summary</span>
+                <span className="text-[10px] font-normal text-slate-500 font-mono">v{pendingImportData.version || '1.0'}</span>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-slate-600 text-[11px]">
-                <div>
-                  Export Date: <strong className="text-slate-800 font-mono">{pendingImportData.exportedAt ? new Date(pendingImportData.exportedAt).toLocaleString() : 'Unknown'}</strong>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-slate-600 text-[11px]">
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Invoices & Bills</div>
+                  <div className="text-sm font-bold text-blue-700">{pendingImportData.invoices?.length || 0}</div>
                 </div>
-                <div>
-                  Version: <strong className="text-slate-800 font-mono">{pendingImportData.version || '1.0'}</strong>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Parties / Ledgers</div>
+                  <div className="text-sm font-bold text-blue-700">{pendingImportData.parties?.length || 0}</div>
                 </div>
-                <div>
-                  Invoices: <strong className="text-blue-700 font-bold">{pendingImportData.invoices?.length || 0}</strong>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Trucks & Fleet</div>
+                  <div className="text-sm font-bold text-blue-700">{pendingImportData.vehicles?.length || 0}</div>
                 </div>
-                <div>
-                  Parties: <strong className="text-blue-700 font-bold">{pendingImportData.parties?.length || 0}</strong>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Trip Expenses</div>
+                  <div className="text-sm font-bold text-blue-700">{pendingImportData.expenses?.length || 0}</div>
                 </div>
-                <div>
-                  Vehicles / Trucks: <strong className="text-blue-700 font-bold">{pendingImportData.vehicles?.length || 0}</strong>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Stock Products</div>
+                  <div className="text-sm font-bold text-blue-700">{pendingImportData.products?.length || 0}</div>
                 </div>
-                <div>
-                  Expenses: <strong className="text-blue-700 font-bold">{pendingImportData.expenses?.length || 0}</strong>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Notes / Users</div>
+                  <div className="text-sm font-bold text-blue-700">
+                    {(pendingImportData.notesReminders?.length || 0) + (pendingImportData.appUsers?.length || 0)}
+                  </div>
                 </div>
+              </div>
+              <div className="text-[10px] text-slate-500 pt-1">
+                Exported Date: <strong className="text-slate-700 font-mono">{pendingImportData.exportedAt ? new Date(pendingImportData.exportedAt).toLocaleString() : 'Recent'}</strong>
               </div>
             </div>
 

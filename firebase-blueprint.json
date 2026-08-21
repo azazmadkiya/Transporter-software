@@ -1,0 +1,163 @@
+{
+  "entities": {
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Transport invoices, GST tax bills, regular freight bills, sales bills and purchase bills",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "invoiceDate": { "type": "string" },
+        "billType": { "type": "string" },
+        "consignorName": { "type": "string" },
+        "consigneeName": { "type": "string" },
+        "netPayable": { "type": "number" },
+        "balanceDue": { "type": "number" },
+        "paymentStatus": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "invoiceNumber"]
+    },
+    "Party": {
+      "title": "Party",
+      "description": "Consignors, consignees, transport parties, customers and vendors",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "gstin": { "type": "string" },
+        "partyType": { "type": "string" },
+        "openingBalance": { "type": "number" },
+        "currentBalance": { "type": "number" }
+      },
+      "required": ["id", "name"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Trucks, lorries, trailers and vehicles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "vehicleNumber": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverPhone": { "type": "string" },
+        "transporterName": { "type": "string" }
+      },
+      "required": ["id", "vehicleNumber"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Truck trip expenses, fuel diesel bills, driver advances and maintenance",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "truckNumber": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" }
+      },
+      "required": ["id", "amount"]
+    },
+    "ProductItem": {
+      "title": "ProductItem",
+      "description": "Stock products and trade goods",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "unit": { "type": "string" },
+        "salePrice": { "type": "number" }
+      },
+      "required": ["id", "name"]
+    },
+    "StockTransaction": {
+      "title": "StockTransaction",
+      "description": "In/Out stock movement logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "type": { "type": "string" },
+        "quantity": { "type": "number" }
+      },
+      "required": ["id", "productId"]
+    },
+    "NoteReminder": {
+      "title": "NoteReminder",
+      "description": "Trip reminders and operational notes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "priority": { "type": "string" }
+      },
+      "required": ["id", "text"]
+    },
+    "AppUserAccount": {
+      "title": "AppUserAccount",
+      "description": "User login accounts and role definitions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string" }
+      },
+      "required": ["id", "username"]
+    },
+    "CompanySettings": {
+      "title": "CompanySettings",
+      "description": "Transport business company profile, GSTIN, PAN, bank details",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string" },
+        "gstin": { "type": "string" },
+        "pan": { "type": "string" },
+        "bankName": { "type": "string" },
+        "bankAccountNo": { "type": "string" }
+      },
+      "required": ["companyName"]
+    }
+  },
+  "firestore": {
+    "/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Transport and tax invoices"
+    },
+    "/parties/{partyId}": {
+      "schema": "Party",
+      "description": "Registered parties and accounts"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Fleet vehicle profiles"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Truck trip and operational expenses"
+    },
+    "/products/{productId}": {
+      "schema": "ProductItem",
+      "description": "Stock products"
+    },
+    "/stock_transactions/{txId}": {
+      "schema": "StockTransaction",
+      "description": "Inventory movement records"
+    },
+    "/notes_reminders/{noteId}": {
+      "schema": "NoteReminder",
+      "description": "Trip and general reminders"
+    },
+    "/app_users/{userId}": {
+      "schema": "AppUserAccount",
+      "description": "Application user logins"
+    },
+    "/settings/company_profile": {
+      "schema": "CompanySettings",
+      "description": "Company configuration and bank account details"
+    }
+  }
+}

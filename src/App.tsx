@@ -804,6 +804,9 @@ export default function App() {
               parties={parties}
               vehicles={vehicles}
               expenses={expenses}
+              products={products}
+              stockTransactions={stockTransactions}
+              notesReminders={notesReminders}
             />
           )}
 
